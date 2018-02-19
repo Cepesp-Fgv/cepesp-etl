@@ -1,0 +1,6 @@
+source/*.csv
+source/*.gz
+output/*.csv
+output/*.gz
+.idea
+__pycache__/
