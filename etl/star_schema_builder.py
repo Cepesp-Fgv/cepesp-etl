@@ -1,3 +1,4 @@
+import csv
 import os
 
 from pandas import DataFrame, read_csv
@@ -30,20 +31,21 @@ def set_ids(df: DataFrame) -> DataFrame:
     return df[['ID'] + columns]
 
 
+def unique_dim(df: DataFrame, dim: Dim):
+    df = df.groupby(dim.columns, as_index=False).first()
+    df = df.sort_values(dim.match_column, ascending=True)
+    return set_ids(df[dim.columns])
+
+
 def create_dim_output(df: DataFrame, dim: Dim) -> DataFrame:
     filename = 'output/%s.csv.gz' % dim.name
     exists = os.path.exists(filename)
     if exists:
         original = read_csv(filename, dtype=str, encoding='utf-8')
-        original.set_index(dim.match_column, inplace=True)
+        df = df.append(original, ignore_index=True)
+        df = unique_dim(df, dim)
 
-        df.set_index(dim.match_column, inplace=True)
-        df.append(original, ignore_index=False)
-        df.reset_index(inplace=True)
-
-    df = set_ids(df)
-
-    df.to_csv(filename, compression='gzip', header=True, index=False, encoding='utf-8')
+    df.to_csv(filename, compression='gzip', header=True, index=False, quoting=csv.QUOTE_NONNUMERIC, encoding='utf-8')
 
     return df
 
@@ -52,72 +54,43 @@ def create_fact_output(df: DataFrame, name: str):
     filename = 'output/%s.csv.gz' % name
     exists = os.path.exists(filename)
     if exists:
-        mode = 'w'
+        mode = 'a'
         header = False
     else:
-        mode = 'a'
+        mode = 'w'
         header = True
 
-    df.to_csv(filename, compression='gzip', header=header, index=False, mode=mode)
+    df.to_csv(filename, compression='gzip', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC, mode=mode)
 
 
-def apply_dim(fact: DataFrame, dim: DataFrame, id_key: str, match_column: str) -> DataFrame:
-    print("Applying dim %s to fact" % id_key)
-    for index, row in dim.iterrows():
-        fact.loc[fact[match_column] == row[match_column], id_key] = row.ID
+def apply_dim(fact: DataFrame, dim_df: DataFrame, dim: Dim) -> DataFrame:
+    print("Applying dim %s to fact" % dim.name)
+    fact.set_index(dim.match_column, inplace=True)
+    dim_df.set_index(dim.match_column, inplace=True)
+    fact = fact.join(dim_df, lsuffix='_l', rsuffix='_r')
+    fact = fact.reset_index(drop=True)
+    fact = fact.rename(columns={'ID': dim.id_column})
+    columns = [c for c in fact.columns if c != dim.id_column and not (str(c).endswith('_r') or str(c).endswith('_l'))]
 
-    fact[id_key] = fact[id_key].astype(int)
-
-    return fact
+    return fact[columns + [dim.id_column]]
 
 
-def create_dim(source: DataFrame, dim: Dim) -> DataFrame:
+def create_dim(df: DataFrame, dim: Dim) -> DataFrame:
     print("Creating dim %s" % dim.name)
-    df = source.groupby(dim.columns, as_index=False).first()
-    df = df.sort_values(dim.match_column, ascending=True)
+    df = unique_dim(df, dim)
 
-    return create_dim_output(df[dim.columns], dim)
-
-
-def create_fact(fact: DataFrame, name: str, dims_columns: list):
-    print("Creating fact")
-    fact_columns = [c for c in fact.columns if c not in dims_columns]
-
-    create_fact_output(fact[fact_columns], name)
-
-
-def build_schema(source, schema: StarSchema):
-    created_dims = []
-    for dim in schema.dims:
-        df = create_dim(source, dim)
-        created_dims.append(df)
-
-    dims_columns = []
-    i = 0
-    for dim in schema.dims:
-        apply_dim(source, created_dims[i], dim.id_column, dim.match_column)
-        dims_columns += dim.columns
-        i += 1
-
-    create_fact(source, schema.fact, dims_columns)
+    return create_dim_output(df, dim)
 
 
 def build_dimensions(source: DataFrame, schema: StarSchema):
-    created_dims = []
     for dim in schema.dims:
-        df = create_dim(source, dim)
-        created_dims.append(df)
-
-    return created_dims
+        create_dim(source, dim)
 
 
 def build_fact(source: DataFrame, schema: StarSchema):
-    dims_columns = []
-    created_dims = []
     for dim in schema.dims:
         df = read_csv("output/%s.csv.gz" % dim.name, dtype=str, encoding='utf-8')
-        created_dims.append(df)
-        dims_columns = dim.columns
-        apply_dim(source, df, dim.id_column, dim.match_column)
+        source = apply_dim(source, df, dim)
 
-    create_fact(source, schema.fact, dims_columns)
+    print("Creating fact")
+    create_fact_output(source, schema.fact)
