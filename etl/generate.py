@@ -23,7 +23,7 @@ SCHEMA = StarSchema(
 
         Dim('info_candidato_dim',
             ['NOME_CANDIDATO', 'CPF_CANDIDATO', 'NUM_TITULO_ELEITORAL_CANDIDATO'],
-            'DIM_INFO_CANDIDATO_ID'),
+            'DIM_INFO_CANDIDATO_ID', 2),
 
     ]
 )
@@ -51,6 +51,9 @@ def create_fact(years):
             i += 1
 
 
-create_dims(range(1998, 2018, 2))
-create_fact(range(1998, 2018, 4))
-create_fact(range(2000, 2018, 4))
+# create_dims(range(1998, 2018, 2))
+# create_fact(range(1998, 2018, 4))
+# create_fact(range(2000, 2018, 4))
+
+create_dims([2010, 2014])
+create_fact([2010, 2014])

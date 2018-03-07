@@ -60,7 +60,7 @@ def create_fact_output(df: DataFrame, name: str):
         mode = 'w'
         header = True
 
-    df.to_csv(filename, compression='gzip', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC, mode=mode)
+    df.to_csv(filename, compression='gzip', encoding='utf-8', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC, mode=mode)
 
 
 def apply_dim(fact: DataFrame, dim_df: DataFrame, dim: Dim) -> DataFrame:
