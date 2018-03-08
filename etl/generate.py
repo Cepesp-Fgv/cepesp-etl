@@ -29,14 +29,10 @@ SCHEMA = StarSchema(
 )
 
 
-def read_df(year) -> pd.DataFrame:
-    return pd.read_csv("source/candidato_%d.csv.gz" % year, sep=';', dtype=str, encoding='utf-8')
-
-
 def create_dims(years):
     for y in years:
         print("Building dimensions for year %d" % y)
-        df = read_df(y)
+        df = pd.read_csv("source/candidato_%d.csv.gz" % y, sep=';', dtype=str, encoding='utf-8')
         build_dimensions(df, SCHEMA)
 
 
