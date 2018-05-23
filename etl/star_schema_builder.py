@@ -1,7 +1,6 @@
 import csv
 import os
-
-from pandas import DataFrame, read_csv
+from pandas import DataFrame, read_csv, to_numeric
 
 
 class Table:
@@ -11,16 +10,26 @@ class Table:
 
 
 class Dim(Table):
-    def __init__(self, name: str, columns: list, id_column: str, match_idx: int = 0):
+    def __init__(self, name: str, columns: list, id_column: str, key_columns=None):
         super().__init__(name, columns)
         self.id_column = id_column
-        self.match_column = columns[match_idx]
+        if key_columns is not None:
+            if isinstance(key_columns, list):
+                self.match_columns = key_columns
+            else:
+                self.match_columns = [key_columns]
+        else:
+            self.match_columns = columns[0]
 
 
 class StarSchema:
     def __init__(self, fact: str, dims: list):
         self.fact = fact
         self.dims = dims
+        self.fact_columns = []
+
+        for d in self.dims:
+            self.fact_columns.append(d.id_column)
 
 
 def set_ids(df: DataFrame) -> DataFrame:
@@ -33,14 +42,14 @@ def set_ids(df: DataFrame) -> DataFrame:
 
 def unique_dim(df: DataFrame, dim: Dim):
     df = df.groupby(dim.columns, as_index=False).first()
-    df = df.sort_values(dim.match_column, ascending=True)
+    df = df.sort_values(dim.match_columns, ascending=True)
     return set_ids(df[dim.columns])
 
 
-def create_dim_output(df: DataFrame, dim: Dim) -> DataFrame:
+def create_dim_output(df: DataFrame, dim: Dim, overwrite=False) -> DataFrame:
     filename = 'output/%s.csv.gz' % dim.name
     exists = os.path.exists(filename)
-    if exists:
+    if exists and not overwrite:
         original = read_csv(filename, dtype=str, encoding='utf-8')
         df = df.append(original, ignore_index=True)
         df = unique_dim(df, dim)
@@ -63,23 +72,30 @@ def create_fact_output(df: DataFrame, name: str):
     df.to_csv(filename, compression='gzip', encoding='utf-8', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC, mode=mode)
 
 
+def resolve_conflicts(df: DataFrame, prefer='_x', drop='_y') -> DataFrame:
+    columns = df.columns.values.tolist()
+    conflicts = [c for c in columns if c.endswith(prefer)]
+    drops = [c for c in columns if c.endswith(drop)]
+    renames = dict()
+    for c in conflicts:
+        renames[c] = c.replace(prefer, '')
+
+    return df.rename(columns=renames).drop(drops, axis=1)
+
+
 def apply_dim(fact: DataFrame, dim_df: DataFrame, dim: Dim) -> DataFrame:
     print("Applying dim %s to fact" % dim.name)
-    fact.set_index(dim.match_column, inplace=True)
-    dim_df.set_index(dim.match_column, inplace=True)
-    fact = fact.join(dim_df, lsuffix='_l', rsuffix='_r')
-    fact = fact.reset_index(drop=True)
+    fact = fact.merge(dim_df, on=dim.match_columns)
     fact = fact.rename(columns={'ID': dim.id_column})
-    columns = [c for c in fact.columns if c != dim.id_column and not (str(c).endswith('_r') or str(c).endswith('_l'))]
 
-    return fact[columns + [dim.id_column]]
+    return resolve_conflicts(fact)
 
 
-def create_dim(df: DataFrame, dim: Dim) -> DataFrame:
+def create_dim(df: DataFrame, dim: Dim, overwrite=False) -> DataFrame:
     print("Creating dim %s" % dim.name)
     df = unique_dim(df, dim)
 
-    return create_dim_output(df, dim)
+    return create_dim_output(df, dim, overwrite)
 
 
 def build_dimensions(source: DataFrame, schema: StarSchema):
@@ -89,8 +105,9 @@ def build_dimensions(source: DataFrame, schema: StarSchema):
 
 def build_fact(source: DataFrame, schema: StarSchema):
     for dim in schema.dims:
-        df = read_csv("output/%s.csv.gz" % dim.name, dtype=str, encoding='utf-8')
+        dim_path = "output/%s.csv.gz" % dim.name
+        df = read_csv(dim_path, dtype=str, encoding='utf-8')
         source = apply_dim(source, df, dim)
 
     print("Creating fact")
-    create_fact_output(source, schema.fact)
+    create_fact_output(source[schema.fact_columns].apply(to_numeric, errors='ignore'), schema.fact)

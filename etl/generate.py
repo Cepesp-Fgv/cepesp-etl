@@ -1,55 +1,70 @@
-import pandas as pd
-
-from etl.star_schema_builder import StarSchema, Dim, build_dimensions, build_fact
+from etl.cepesp.api import *
+from etl.star_schema_builder import StarSchema, Dim, build_fact, build_dimensions, create_dim, create_dim_output
 
 SCHEMA = StarSchema(
-    'candidatos_fact',
+    'fact_candidatos',
     [
-        Dim('cargo_dim',
-            ['CODIGO_CARGO', 'DESCRICAO_CARGO'],
-            'DIM_CARGO_ID'),
+        Dim('dim_info_ano',
+            CANDIDATOS,
+            'ID_DIM_INFO_ANO',
+            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO']),
 
-        Dim('partido_dim',
-            ['NUMERO_PARTIDO', 'SIGLA_PARTIDO', 'NOME_PARTIDO'],
-            'DIM_PARTIDO_ID'),
+        Dim('dim_candidato',
+            ['NOME_CANDIDATO', 'NOME_URNA_CANDIDATO', 'NUM_TITULO_ELEITORAL_CANDIDATO'],
+            'ID_DIM_CANDIDATO',
+            'NUM_TITULO_ELEITORAL_CANDIDATO'),
 
-        Dim('nome_urna_dim',
-            ['NOME_URNA_CANDIDATO'],
-            'DIM_NOME_URNA_ID'),
-
-        Dim('sit_tot_turno_dim',
-            ['COD_SIT_TOT_TURNO', 'DESC_SIT_TOT_TURNO'],
-            'DIM_SIT_TOT_TURNO_ID', 1),
-
-        Dim('info_candidato_dim',
-            ['NOME_CANDIDATO', 'CPF_CANDIDATO', 'NUM_TITULO_ELEITORAL_CANDIDATO'],
-            'DIM_INFO_CANDIDATO_ID', 2),
-
+        Dim('dim_votacao',
+            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO', 'TOTAL_VOTACAO'],
+            'ID_DIM_VOTACAO',
+            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO']),
     ]
 )
 
 
-def create_dims(years):
-    for y in years:
-        print("Building dimensions for year %d" % y)
-        df = pd.read_csv("source/candidato_%d.csv.gz" % y, sep=';', dtype=str, encoding='utf-8')
-        build_dimensions(df, SCHEMA)
+def get_source(ano: int, cargo: int):
+    df = votos_x_candidatos(ano, cargo, AGR_REGIONAL.BRASIL)
+    df.QTDE_VOTOS = pd.to_numeric(df['QTDE_VOTOS'], errors='coerce')
+
+    columns = df.columns.values.tolist()
+    columns.remove('DATA_GERACAO')
+    columns.remove('HORA_GERACAO')
+    columns.remove('QTDE_VOTOS')
+    df = df.groupby(by=columns, as_index=False)['QTDE_VOTOS'].sum()
+
+    return df.rename(columns={'QTDE_VOTOS': 'TOTAL_VOTACAO'})
 
 
-def create_fact(years):
-    for y in years:
-        print("Building fact for year %d" % y)
-        i = 1
-        for chunk in pd.read_csv("source/candidato_%d.csv.gz" % y, sep=';', dtype=str, encoding='utf-8',
-                                 chunksize=10 ** 6):
-            print("Chunk: %d" % i)
-            build_fact(chunk, SCHEMA)
-            i += 1
+def fix_candidates():
+    dim = SCHEMA.dims[1]
+    df = pd.read_csv('output/dim_candidato.csv.gz')
+    df = df.groupby(by='NUM_TITULO_ELEITORAL_CANDIDATO', as_index=False)
+    df = df[['NOME_CANDIDATO', 'NOME_URNA_CANDIDATO']].max()
+    df['NUM_TITULO_ELEITORAL_CANDIDATO'] = df['NUM_TITULO_ELEITORAL_CANDIDATO'].apply(lambda x: x.zfill(12))
+    create_dim(df, dim, overwrite=True)
 
 
-# create_dims(range(1998, 2018, 2))
-# create_fact(range(1998, 2018, 4))
-# create_fact(range(2000, 2018, 4))
+def fix_votos():
+    dim = SCHEMA.dims[2]
+    df = pd.read_csv('output/dim_votacao.csv.gz')
+    df = df[['ID', 'TOTAL_VOTACAO']]
+    create_dim_output(df, dim, overwrite=True)
 
-create_dims([2010, 2014])
-create_fact([2010, 2014])
+
+def generate():
+    for j in [CARGO.PRESIDENTE, CARGO.GOVERNADOR]:
+        for a in [2014, 2010, 2006, 2002, 1998]:
+            df = get_source(a, j)
+            build_dimensions(df, SCHEMA)
+
+    fix_candidates()
+
+    for j in [CARGO.PRESIDENTE, CARGO.GOVERNADOR]:
+        for a in [2014, 2010, 2006, 2002, 1998]:
+            df = get_source(a, j)
+            build_fact(df, SCHEMA)
+
+    fix_votos()
+
+
+generate()
