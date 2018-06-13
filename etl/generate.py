@@ -1,29 +1,23 @@
 from etl.cepesp.api import *
-from etl.star_schema_builder import StarSchema, Dim, build_fact, build_dimensions, create_dim, create_dim_output
+from etl.insert import insert
+from etl.star_schema_builder import StarSchema, Dim, build_fact, build_dimensions, create_dim
 
-SCHEMA = StarSchema(
-    'fact_candidatos',
-    [
-        Dim('dim_info_ano',
-            CANDIDATOS,
-            'ID_DIM_INFO_ANO',
-            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO']),
+info_ano_dim = Dim('dim_info_ano', CANDIDATOS, 'ID_DIM_INFO_ANO',
+                   ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO', 'SIGLA_UE'])
 
-        Dim('dim_candidato',
-            ['NOME_CANDIDATO', 'NOME_URNA_CANDIDATO', 'NUM_TITULO_ELEITORAL_CANDIDATO'],
-            'ID_DIM_CANDIDATO',
-            'NUM_TITULO_ELEITORAL_CANDIDATO'),
+candidato_dim = Dim('dim_candidato',
+                    ['NOME_CANDIDATO', 'NOME_URNA_CANDIDATO', 'NUM_TITULO_ELEITORAL_CANDIDATO'],
+                    'ID_DIM_CANDIDATO', ['NUM_TITULO_ELEITORAL_CANDIDATO'])
 
-        Dim('dim_votacao',
-            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO', 'TOTAL_VOTACAO'],
-            'ID_DIM_VOTACAO',
-            ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO']),
-    ]
-)
+votacao_dim = Dim('dim_votacao', ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO', 'TOTAL_VOTACAO', 'SIGLA_UE'],
+                  'ID_DIM_VOTACAO', ['ANO_ELEICAO', 'CPF_CANDIDATO', 'NUM_TURNO', 'SIGLA_UE'])
+
+SCHEMA = StarSchema('fact_candidatos', [info_ano_dim, candidato_dim, votacao_dim])
 
 
 def get_source(ano: int, cargo: int):
     df = votos_x_candidatos(ano, cargo, AGR_REGIONAL.BRASIL)
+    df['NUM_TITULO_ELEITORAL_CANDIDATO'] = df['NUM_TITULO_ELEITORAL_CANDIDATO'].apply(lambda x: str(x).zfill(12))
     df.QTDE_VOTOS = pd.to_numeric(df['QTDE_VOTOS'], errors='coerce')
 
     columns = df.columns.values.tolist()
@@ -36,35 +30,46 @@ def get_source(ano: int, cargo: int):
 
 
 def fix_candidates():
-    dim = SCHEMA.dims[1]
-    df = pd.read_csv('output/dim_candidato.csv.gz')
+    df = pd.read_csv('output/dim_candidato.csv.gz', dtype=str)
     df = df.groupby(by='NUM_TITULO_ELEITORAL_CANDIDATO', as_index=False)
     df = df[['NOME_CANDIDATO', 'NOME_URNA_CANDIDATO']].max()
-    df['NUM_TITULO_ELEITORAL_CANDIDATO'] = df['NUM_TITULO_ELEITORAL_CANDIDATO'].apply(lambda x: x.zfill(12))
-    create_dim(df, dim, overwrite=True)
-
-
-def fix_votos():
-    dim = SCHEMA.dims[2]
-    df = pd.read_csv('output/dim_votacao.csv.gz')
-    df = df[['ID', 'TOTAL_VOTACAO']]
-    create_dim_output(df, dim, overwrite=True)
+    create_dim(df, candidato_dim, overwrite=True)
 
 
 def generate():
-    for j in [CARGO.PRESIDENTE, CARGO.GOVERNADOR]:
-        for a in [2014, 2010, 2006, 2002, 1998]:
+    jobs = [CARGO.PRESIDENTE,
+            CARGO.GOVERNADOR,
+            CARGO.SENADOR,
+            CARGO.DEPUTADO_FEDERAL,
+            CARGO.DEPUTADO_DISTRITAL,
+            CARGO.DEPUTADO_ESTADUAL]
+
+    for j in jobs:
+        print("Job:", j)
+        for a in get_elections(j):
+            print("Year:", a)
             df = get_source(a, j)
             build_dimensions(df, SCHEMA)
 
     fix_candidates()
 
-    for j in [CARGO.PRESIDENTE, CARGO.GOVERNADOR]:
-        for a in [2014, 2010, 2006, 2002, 1998]:
+    for j in jobs:
+        print("Job:", j)
+        for a in get_elections(j):
+            print("Year:", a)
             df = get_source(a, j)
             build_fact(df, SCHEMA)
 
-    fix_votos()
+
+def import_db():
+    # db = MySQLdb.connect(user="root", passwd="123456", db="cepesp")
+    # cur = db.cursor()
+    for dim in SCHEMA.dims:
+        print("Inserting dim %s..." % dim.name)
+        insert(None, dim.name, ['ID'] + dim.columns)
+
+        # db.close()
 
 
 generate()
+# import_db()

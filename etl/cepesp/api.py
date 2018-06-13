@@ -111,6 +111,13 @@ def candidato_x_legendas(ano: int, cargo: int):
     return resolve_conflicts(merged)
 
 
+def get_elections(cargo: int):
+    if cargo in [1, 3, 5, 6, 7, 8]:
+        return [2014, 2010, 2006, 2002, 1998]
+    elif cargo in [11, 13]:
+        return [2016, 2012, 2008, 2004, 2000]
+
+
 class CARGO:
     PRESIDENTE = 1
     SENADOR = 5

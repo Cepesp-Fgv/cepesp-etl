@@ -1,2 +1,3 @@
-# CepespETL
-Python 3
+# Cepesp ETL
+
+An ETL Project for generating structured data from TSE files

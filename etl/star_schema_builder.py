@@ -1,5 +1,6 @@
 import csv
 import os
+
 from pandas import DataFrame, read_csv, to_numeric
 
 
@@ -69,7 +70,8 @@ def create_fact_output(df: DataFrame, name: str):
         mode = 'w'
         header = True
 
-    df.to_csv(filename, compression='gzip', encoding='utf-8', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC, mode=mode)
+    df.to_csv(filename, compression='gzip', encoding='utf-8', header=header, index=False, quoting=csv.QUOTE_NONNUMERIC,
+              mode=mode)
 
 
 def resolve_conflicts(df: DataFrame, prefer='_x', drop='_y') -> DataFrame:
@@ -85,7 +87,13 @@ def resolve_conflicts(df: DataFrame, prefer='_x', drop='_y') -> DataFrame:
 
 def apply_dim(fact: DataFrame, dim_df: DataFrame, dim: Dim) -> DataFrame:
     print("Applying dim %s to fact" % dim.name)
-    fact = fact.merge(dim_df, on=dim.match_columns)
+
+    dim_df = dim_df.groupby(dim.match_columns).max()
+    fact = fact \
+        .set_index(dim.match_columns) \
+        .join(dim_df, how='left', lsuffix='_x', rsuffix='_y') \
+        .reset_index()
+
     fact = fact.rename(columns={'ID': dim.id_column})
 
     return resolve_conflicts(fact)
